@@ -1,0 +1,27 @@
+{
+    "DESIGN_NAME": "async_fifo",
+    "VERILOG_FILES": [
+        "dir::src/async_fifo.sv",
+        "dir::src/fifomem.sv",
+        "dir::src/gray_to_bin.sv",
+        "dir::src/rd_ptr_empty.sv",
+        "dir::src/reset_sync.sv",
+        "dir::src/sync_r2w_ptr.sv",
+        "dir::src/sync_w2r_ptr.sv",
+        "dir::src/wr_ptr_full.sv"
+    ],
+    "CLOCK_PORT": "wr_clk",
+    "CLOCK_NET": "wr_clk",
+    "CLOCK_PERIOD": 10.0,
+    "BASE_SDC_FILE": "dir::src/constraint.sdc",
+    "PDK": "sky130A",
+    "STD_CELL_LIBRARY": "sky130_fd_sc_hd",
+    "FP_CORE_UTIL": 45,
+    "PL_TARGET_DENSITY": 0.55,
+    "SYNTH_MAX_FANOUT": 8,
+    "SYNTH_STRATEGY": "DELAY 0",
+    "SYNTH_BUFFERING": 1,
+    "SYNTH_READ_BLACKBOX_LIB": 1,
+    "RUN_KLAYOUT_XOR": false,
+    "MAGIC_DEF_NO_DIODE_INSERTION": true
+}
