@@ -32,7 +32,7 @@ module async_fifo #(
     input  logic [DATA_WIDTH-1:0] wr_data,
     output logic                  full,
 
-    input  logic [ADDR_WIDTH:0]   afull_thresh,
+    input  logic [ADDR_WIDTH-1:0]   afull_thresh,
     output logic                  afull,
 
     // ------------------------------------------------------------------------
@@ -44,7 +44,7 @@ module async_fifo #(
     output logic [DATA_WIDTH-1:0] rd_data,
     output logic                  empty,
 
-    input  logic [ADDR_WIDTH:0]   aempty_thresh,
+    input  logic [ADDR_WIDTH-1:0]   aempty_thresh,
     output logic                  aempty
 );
 
