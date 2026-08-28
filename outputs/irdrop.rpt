@@ -1,0 +1,26 @@
++ analyze_power_grid -net VDD -voltage_file /home/jayanth/librelane/designs/asyncfifo/runs/RUN_2026-08-28_15-48-26/57-openroad-irdropreport/net-VDD.csv
+[INFO PSM-0040] All shapes on net VDD are connected.
+########## IR report #################
+Net              : VDD
+Corner           : nom_tt_025C_1v80
+Total power      : 4.11e-03 W
+Supply voltage   : 1.80e+00 V
+Worstcase voltage: 1.80e+00 V
+Average voltage  : 1.80e+00 V
+Average IR drop  : 3.70e-05 V
+Worstcase IR drop: 1.09e-04 V
+Percentage drop  : 0.01 %
+######################################
++ analyze_power_grid -net VSS -voltage_file /home/jayanth/librelane/designs/asyncfifo/runs/RUN_2026-08-28_15-48-26/57-openroad-irdropreport/net-VSS.csv
+[INFO PSM-0040] All shapes on net VSS are connected.
+########## IR report #################
+Net              : VSS
+Corner           : nom_tt_025C_1v80
+Total power      : 4.11e-03 W
+Supply voltage   : 0.00e+00 V
+Worstcase voltage: 1.22e-04 V
+Average voltage  : 3.62e-05 V
+Average IR drop  : 3.62e-05 V
+Worstcase IR drop: 1.22e-04 V
+Percentage drop  : 0.01 %
+######################################
