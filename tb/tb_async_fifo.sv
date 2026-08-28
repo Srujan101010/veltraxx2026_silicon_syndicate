@@ -1,44 +1,69 @@
 // ============================================================================
 // File: tb_async_fifo.sv
-// Description: Fully comprehensive, self-checking SystemVerilog testbench
-//              for async_fifo with 100% functional test case coverage.
+// Description:
+//   Self-checking testbench for asynchronous FIFO.
+//
+//   Verification principles:
+//     - Inputs are driven on negedge.
+//     - DUT samples inputs on posedge.
+//     - Reference queue tracks ONLY accepted writes.
+//     - Expected data is removed ONLY when an accepted read is observed.
+//     - Registered read-data is checked with explicit one-cycle latency.
+//     - Each test starts with a known reference-model state.
 // ============================================================================
+
 `timescale 1ns / 1ps
 
 module tb_async_fifo;
 
-    // ------------------------------------------------------------------------
-    // Parameters
-    // ------------------------------------------------------------------------
+    // =========================================================================
+    // PARAMETERS
+    // =========================================================================
+
     localparam int DATA_WIDTH = 8;
-    localparam int ADDR_WIDTH = 4; // Depth = 16
+    localparam int ADDR_WIDTH = 4;
     localparam int DEPTH      = 1 << ADDR_WIDTH;
 
-    real wr_clk_period = 10.0; // 100 MHz
-    real rd_clk_period = 25.0; // 40 MHz
+    real wr_clk_period = 10.0;
+    real rd_clk_period = 25.0;
 
-    // ------------------------------------------------------------------------
-    // DUT Interfaces
-    // ------------------------------------------------------------------------
-    logic                  wr_clk = 0;
-    logic                  wr_rst_n = 0;
-    logic                  wr_en = 0;
-    logic [DATA_WIDTH-1:0] wr_data = 0;
+    // =========================================================================
+    // DUT SIGNALS
+    // =========================================================================
+
+    logic                  wr_clk   = 1'b0;
+    logic                  wr_rst_n = 1'b0;
+    logic                  wr_en    = 1'b0;
+    logic [DATA_WIDTH-1:0] wr_data  = '0;
     logic                  full;
+
     logic [ADDR_WIDTH:0]   afull_thresh = 12;
     logic                  afull;
 
-    logic                  rd_clk = 0;
-    logic                  rd_rst_n = 0;
-    logic                  rd_en = 0;
+    logic                  rd_clk   = 1'b0;
+    logic                  rd_rst_n = 1'b0;
+    logic                  rd_en    = 1'b0;
     logic [DATA_WIDTH-1:0] rd_data;
     logic                  empty;
+
     logic [ADDR_WIDTH:0]   aempty_thresh = 3;
     logic                  aempty;
 
-    // ------------------------------------------------------------------------
-    // Scoreboard Variables & Statistics
-    // ------------------------------------------------------------------------
+    // =========================================================================
+    // REFERENCE MODEL
+    //
+    // The reference queue contains exactly the data accepted by the DUT.
+    //
+    // IMPORTANT:
+    //   A write is accepted only when:
+    //       wr_en && !full
+    //
+    //   A read is accepted only when:
+    //       rd_en && !empty
+    //
+    // Registered rd_data is checked one rd_clk later.
+    // =========================================================================
+
     mailbox #(logic [DATA_WIDTH-1:0]) ref_mbx = new();
 
     int error_count     = 0;
@@ -47,9 +72,13 @@ module tb_async_fifo;
     int accepted_writes = 0;
     int accepted_reads  = 0;
 
-    // ------------------------------------------------------------------------
-    // DUT Instance
-    // ------------------------------------------------------------------------
+    // Number of accepted reads for which rd_data is still expected.
+    int pending_read_count = 0;
+
+    // =========================================================================
+    // DUT
+    // =========================================================================
+
     async_fifo #(
         .DATA_WIDTH(DATA_WIDTH),
         .ADDR_WIDTH(ADDR_WIDTH)
@@ -71,319 +100,823 @@ module tb_async_fifo;
         .aempty        (aempty)
     );
 
-    // ------------------------------------------------------------------------
-    // Independent Clock Generators
-    // ------------------------------------------------------------------------
-    initial forever #(wr_clk_period / 2.0) wr_clk = ~wr_clk;
-    initial forever #(rd_clk_period / 2.0) rd_clk = ~rd_clk;
+    // =========================================================================
+    // CLOCK GENERATION
+    // =========================================================================
 
-    // VCD Waveforms
+    initial begin
+        forever #(wr_clk_period / 2.0)
+            wr_clk = ~wr_clk;
+    end
+
+    initial begin
+        forever #(rd_clk_period / 2.0)
+            rd_clk = ~rd_clk;
+    end
+
+    // =========================================================================
+    // WAVEFORM
+    // =========================================================================
+
     initial begin
         $dumpfile("async_fifo_tb.vcd");
         $dumpvars(0, tb_async_fifo);
     end
 
-    // ------------------------------------------------------------------------
-    // Write Domain Monitor
-    // ------------------------------------------------------------------------
+    // =========================================================================
+    // WRITE MONITOR / REFERENCE MODEL
+    //
+    // Inputs are driven on negedge, therefore they are stable before posedge.
+    // =========================================================================
+
     always @(posedge wr_clk) begin
+
         if (wr_rst_n && wr_en) begin
+
             total_writes++;
+
             if (!full) begin
+
                 accepted_writes++;
+
+                // Store exactly what the DUT accepted.
                 ref_mbx.put(wr_data);
+
+                $display(
+                    "[%0t ns] [WRITE ACCEPTED] Data: 0x%0h",
+                    $time,
+                    wr_data
+                );
+
             end
+            else begin
+
+                $display(
+                    "[%0t ns] [WRITE BLOCKED] FIFO FULL, Data: 0x%0h ignored",
+                    $time,
+                    wr_data
+                );
+
+            end
+
         end
+
     end
 
-    // ------------------------------------------------------------------------
-    // Read Domain Scoreboard / Monitor (Combinational RAM Safe)
-    // ------------------------------------------------------------------------
+    // =========================================================================
+    // READ MONITOR
+    //
+    // The DUT has registered rd_data.
+    //
+    // At clock N:
+    //     rd_en && !empty
+    //          -> read transaction accepted
+    //
+    // At clock N+1:
+    //     rd_data corresponds to that read.
+    //
+    // The mailbox is popped at the same time that the corresponding
+    // registered data is checked.
+    // =========================================================================
+
+    logic pending_read = 1'b0;
+
     always @(posedge rd_clk) begin
+
         logic [DATA_WIDTH-1:0] expected_data;
-        logic [DATA_WIDTH-1:0] current_rd_data;
-    
-        if (rd_rst_n && rd_en && !empty) begin
-            total_reads++;
-            accepted_reads++;
-    
-            // 1. Capture rd_data BEFORE rd_ptr increments on edge
-            current_rd_data = rd_data;
-    
-            // 2. Pop and compare with Reference Model
-            if (ref_mbx.try_get(expected_data)) begin
-                if (current_rd_data !== expected_data) begin
-                    $error("[%0t ns] [FAIL: DATA MISMATCH] Read: 0x%0h | Expected: 0x%0h", 
-                           $time, current_rd_data, expected_data);
-                    error_count++;
-                end else begin
-                    $display("[%0t ns] [READ MATCH] Data: 0x%0h verified successfully.", 
-                             $time, current_rd_data);
-                end
-            end else begin
-                $error("[%0t ns] [FAIL: EXTRA READ] Reference queue empty!", $time);
-                error_count++;
-            end
+
+        if (!rd_rst_n) begin
+
+            pending_read <= 1'b0;
+
         end
+        else begin
+
+            // -----------------------------------------------------------------
+            // CHECK RESULT OF PREVIOUS ACCEPTED READ
+            // -----------------------------------------------------------------
+
+            if (pending_read) begin
+
+                if (ref_mbx.try_get(expected_data)) begin
+
+                    if (rd_data !== expected_data) begin
+
+                        $error(
+                            "[%0t ns] [FAIL: DATA MISMATCH] Read: 0x%0h | Expected: 0x%0h",
+                            $time,
+                            rd_data,
+                            expected_data
+                        );
+
+                        error_count++;
+
+                    end
+                    else begin
+
+                        $display(
+                            "[%0t ns] [READ MATCH] Data: 0x%0h verified successfully.",
+                            $time,
+                            rd_data
+                        );
+
+                    end
+
+                end
+                else begin
+
+                    $error(
+                        "[%0t ns] [FAIL: EXTRA READ] DUT produced data but reference queue is empty!",
+                        $time
+                    );
+
+                    error_count++;
+
+                end
+
+            end
+
+            // -----------------------------------------------------------------
+            // RECORD CURRENT ACCEPTED READ
+            // -----------------------------------------------------------------
+
+            pending_read <= rd_en && !empty;
+
+            if (rd_en && !empty) begin
+
+                total_reads++;
+                accepted_reads++;
+
+            end
+
+        end
+
     end
 
-    // ------------------------------------------------------------------------
-    // Helper Tasks
-    // ------------------------------------------------------------------------
-    task automatic drain_fifo();
-        while (!empty) begin
+    // =========================================================================
+    // WAIT FOR ALL PENDING READ DATA TO BE CHECKED
+    // =========================================================================
+
+    task automatic wait_for_pending_read();
+
+        if (pending_read) begin
             @(posedge rd_clk);
-            if (!empty) rd_en <= 1'b1;
-            else        rd_en <= 1'b0;
         end
-        @(posedge rd_clk);
-        rd_en <= 1'b0;
+
+        // Allow NBA updates and monitor activity to settle.
+        #1;
+
     endtask
+
+    // =========================================================================
+    // DRAIN FIFO
+    //
+    // rd_en is driven before the next sampling edge.
+    // =========================================================================
+
+    task automatic drain_fifo();
+
+        int safety_count;
+
+        safety_count = 0;
+
+        // Continue while DUT reports data available.
+        while (!empty && safety_count < (DEPTH * 4)) begin
+
+            @(negedge rd_clk);
+
+            if (!empty)
+                rd_en = 1'b1;
+            else
+                rd_en = 1'b0;
+
+            safety_count++;
+
+        end
+
+        @(negedge rd_clk);
+        rd_en = 1'b0;
+
+        // Allow the final registered read result to be checked.
+        wait_for_pending_read();
+
+        // Give the synchronized pointer state time to settle.
+        repeat (3) @(posedge rd_clk);
+
+    endtask
+
+    // =========================================================================
+    // CLEAR REFERENCE MODEL
+    // =========================================================================
 
     task automatic clear_mailbox();
+
         logic [DATA_WIDTH-1:0] dummy;
+
         while (ref_mbx.try_get(dummy));
+
+        pending_read = 1'b0;
+
     endtask
 
-    // ------------------------------------------------------------------------
-    // Main Stimulus Orchestration
-    // ------------------------------------------------------------------------
-    initial begin
-        $display("\n========================================================");
-        $display("   STARTING ASYNC FIFO FULL-COVERAGE VERIFICATION");
-        $display("========================================================\n");
+    // =========================================================================
+    // VERIFY REFERENCE MODEL IS EMPTY
+    // =========================================================================
 
-        // Step 1: Initial Resets
-        wr_rst_n = 1'b0; rd_rst_n = 1'b0;
-        wr_en    = 1'b0; rd_en    = 1'b0;
-        #40; wr_rst_n = 1'b1;
-        #20; rd_rst_n = 1'b1;
-        repeat(3) @(posedge wr_clk);
+    task automatic verify_reference_empty(
+        input string test_name
+    );
 
-        // --------------------------------------------------------------------
-        // Test 1: Reset Values & Default State Test
-        // --------------------------------------------------------------------
-        $display("\n--- [TEST 1] Initial Reset & Power-On State ---");
-        if (!empty || full || afull || !aempty) begin
-            $error("[%0t ns] [FAIL] Incorrect initial flag states! full=%0b, empty=%0b, afull=%0b, aempty=%0b",
-                   $time, full, empty, afull, aempty);
+        #1;
+
+        if (ref_mbx.num() != 0) begin
+
+            $error(
+                "[%0t ns] [FAIL: %s] Reference queue contains %0d item(s)!",
+                $time,
+                test_name,
+                ref_mbx.num()
+            );
+
             error_count++;
-        end else begin
-            $display("[%0t ns] [PASS] Reset values verified correctly.", $time);
+
+        end
+        else begin
+
+            $display(
+                "[%0t ns] [PASS: %s] Reference queue empty.",
+                $time,
+                test_name
+            );
+
         end
 
-        // --------------------------------------------------------------------
-        // Test 2: Threshold Flags Test (afull & aempty)
-        // --------------------------------------------------------------------
-        $display("\n--- [TEST 2] Testing Threshold Flags (afull & aempty) ---");
+    endtask
+
+    // =========================================================================
+    // TEST BOUNDARY
+    //
+    // Before starting a new independent test:
+    //   1. Disable stimulus.
+    //   2. Wait for pending registered read.
+    //   3. Verify reference queue.
+    //   4. Clear it if necessary.
+    // =========================================================================
+
+    task automatic prepare_next_test();
+
+        @(negedge wr_clk);
+        wr_en = 1'b0;
+
+        @(negedge rd_clk);
+        rd_en = 1'b0;
+
+        wait_for_pending_read();
+
+        if (ref_mbx.num() != 0) begin
+
+            $display(
+                "[%0t ns] [INFO] Clearing %0d leftover reference item(s) at test boundary.",
+                $time,
+                ref_mbx.num()
+            );
+
+            clear_mailbox();
+
+        end
+
+    endtask
+
+    // =========================================================================
+    // MAIN TEST SEQUENCE
+    // =========================================================================
+
+    initial begin
+
+        $display("\n========================================================");
+        $display("        STARTING ASYNC FIFO VERIFICATION");
+        $display("========================================================\n");
+
+        // =====================================================================
+        // INITIAL RESET
+        // =====================================================================
+
+        wr_rst_n = 1'b0;
+        rd_rst_n = 1'b0;
+
+        wr_en = 1'b0;
+        rd_en = 1'b0;
+
+        #40;
+
+        wr_rst_n = 1'b1;
+
+        #20;
+
+        rd_rst_n = 1'b1;
+
+        repeat (3) @(posedge wr_clk);
+        repeat (2) @(posedge rd_clk);
+
+        // =====================================================================
+        // TEST 1: RESET
+        // =====================================================================
+
+        $display("\n--- [TEST 1] Initial Reset & Power-On State ---");
+
+        if (!empty || full || afull || !aempty) begin
+
+            $error(
+                "[%0t ns] [FAIL] Incorrect initial flag states! full=%0b empty=%0b afull=%0b aempty=%0b",
+                $time,
+                full,
+                empty,
+                afull,
+                aempty
+            );
+
+            error_count++;
+
+        end
+        else begin
+
+            $display(
+                "[%0t ns] [PASS] Reset values verified correctly.",
+                $time
+            );
+
+        end
+
+        // =====================================================================
+        // TEST 2: THRESHOLD FLAGS
+        // =====================================================================
+
+        $display("\n--- [TEST 2] Testing Threshold Flags ---");
+
+        prepare_next_test();
+
         afull_thresh  = 12;
         aempty_thresh = 3;
 
-        // Step 2a: Write until afull threshold is reached
+        // ------------------------------------------------------------
+        // Write exactly 12 known values.
+        // ------------------------------------------------------------
+
         for (int i = 0; i < 12; i++) begin
-            @(posedge wr_clk);
-            wr_en   <= 1'b1;
-            wr_data <= 8'hA0 + i;
+
+            @(negedge wr_clk);
+
+            wr_en   = 1'b1;
+            wr_data = 8'hA0 + i;
+
         end
-        @(posedge wr_clk);
-        wr_en <= 1'b0;
-        
-        // Wait 2-3 read clock cycles for CDC pointer sync to assert afull
-        repeat(3) @(posedge wr_clk);
+
+        @(negedge wr_clk);
+        wr_en = 1'b0;
+
+        // Allow local AFULL calculation to settle.
+        repeat (3) @(posedge wr_clk);
+
         if (!afull) begin
-            $error("[%0t ns] [FAIL] afull failed to assert at fill count 12!", $time);
+
+            $error(
+                "[%0t ns] [FAIL] afull failed to assert at fill count 12! afull=%0b",
+                $time,
+                afull
+            );
+
             error_count++;
-        end else begin
-            $display("[%0t ns] [PASS] afull asserted correctly at threshold.", $time);
+
+        end
+        else begin
+
+            $display(
+                "[%0t ns] [PASS] afull asserted correctly at threshold.",
+                $time
+            );
+
         end
 
-        // Step 2b: Read down to aempty threshold
+        // Drain all data and wait for final registered read.
         drain_fifo();
-        repeat(3) @(posedge rd_clk);
+
+        repeat (3) @(posedge rd_clk);
+
         if (!aempty) begin
-            $error("[%0t ns] [FAIL] aempty failed to assert when empty!", $time);
+
+            $error(
+                "[%0t ns] [FAIL] aempty failed to assert when FIFO is empty!",
+                $time
+            );
+
             error_count++;
-        end else begin
-            $display("[%0t ns] [PASS] aempty asserted correctly at low threshold.", $time);
+
+        end
+        else begin
+
+            $display(
+                "[%0t ns] [PASS] aempty asserted correctly.",
+                $time
+            );
+
         end
 
-        // --------------------------------------------------------------------
-        // Test 3: FULL Flag & Overflow Handling Test
-        // --------------------------------------------------------------------
+        verify_reference_empty("TEST 2");
+
+        // =====================================================================
+        // TEST 3: FULL / OVERFLOW
+        // =====================================================================
+
         $display("\n--- [TEST 3] Testing FULL Flag & Overflow Protection ---");
+
+        prepare_next_test();
+
+        // Fill until FULL.
         while (!full) begin
-            @(posedge wr_clk);
-            wr_en   <= 1'b1;
-            wr_data <= $urandom_range(8'h01, 8'hFE);
+
+            @(negedge wr_clk);
+
+            wr_en   = 1'b1;
+            wr_data = $urandom_range(8'h01, 8'hFE);
+
         end
-        @(posedge wr_clk);
-        wr_en <= 1'b1; // Intentionally attempt write while full (OVERFLOW TEST)
-        wr_data <= 8'hFF;
-        @(posedge wr_clk);
-        wr_en <= 1'b0;
+
+        // Intentionally attempt one write while FULL.
+        @(negedge wr_clk);
+
+        wr_en   = 1'b1;
+        wr_data = 8'hFF;
+
+        @(negedge wr_clk);
+        wr_en = 1'b0;
 
         if (!full) begin
-            $error("[%0t ns] [FAIL] FULL flag failed to remain asserted!", $time);
+
+            $error(
+                "[%0t ns] [FAIL] FULL flag failed to remain asserted!",
+                $time
+            );
+
             error_count++;
-        end else begin
-            $display("[%0t ns] [PASS] FULL flag verified and overflow write ignored.", $time);
+
+        end
+        else begin
+
+            $display(
+                "[%0t ns] [PASS] FULL flag verified and overflow write ignored.",
+                $time
+            );
+
         end
 
-        // --------------------------------------------------------------------
-        // Test 4: EMPTY Flag & Underflow Handling Test
-        // --------------------------------------------------------------------
-        $display("\n--- [TEST 4] Testing EMPTY Flag & Underflow Protection ---");
-        drain_fifo();
-        repeat(3) @(posedge rd_clk);
+        // =====================================================================
+        // TEST 4: EMPTY / UNDERFLOW
+        // =====================================================================
 
-        // Intentionally attempt read while empty (UNDERFLOW TEST)
-        @(posedge rd_clk);
-        rd_en <= 1'b1;
-        @(posedge rd_clk);
-        rd_en <= 1'b0;
+        $display("\n--- [TEST 4] Testing EMPTY Flag & Underflow Protection ---");
+
+        drain_fifo();
+
+        repeat (3) @(posedge rd_clk);
+
+        // Attempt read while empty.
+        @(negedge rd_clk);
+        rd_en = 1'b1;
+
+        @(negedge rd_clk);
+        rd_en = 1'b0;
 
         if (!empty) begin
-            $error("[%0t ns] [FAIL] EMPTY flag deasserted illegally during underflow!", $time);
+
+            $error(
+                "[%0t ns] [FAIL] EMPTY flag deasserted during underflow attempt!",
+                $time
+            );
+
             error_count++;
-        end else begin
-            $display("[%0t ns] [PASS] EMPTY flag verified and underflow read ignored.", $time);
+
+        end
+        else begin
+
+            $display(
+                "[%0t ns] [PASS] EMPTY flag verified and underflow ignored.",
+                $time
+            );
+
         end
 
-        // --------------------------------------------------------------------
-        // Test 5: Single Element CDC Latency Test
-        // --------------------------------------------------------------------
+        verify_reference_empty("TEST 4");
+
+        // =====================================================================
+        // TEST 5: SINGLE ELEMENT CDC
+        // =====================================================================
+
+      // =====================================================================
+        // TEST 5: SINGLE ELEMENT CDC
+        // =====================================================================
+        
         $display("\n--- [TEST 5] Single-Element CDC Sync Latency Test ---");
-        @(posedge wr_clk);
-        wr_en   <= 1'b1;
-        wr_data <= 8'h55;
-        @(posedge wr_clk);
-        wr_en   <= 1'b0;
-
-        // Check empty deassertion delay across CDC synchronizer cycles
-        repeat(3) @(posedge rd_clk);
-        if (empty) begin
-            $error("[%0t ns] [FAIL] Single item written but empty remained high!", $time);
-            error_count++;
-        end else begin
-            $display("[%0t ns] [PASS] CDC empty flag updated properly for single item.", $time);
+        
+        prepare_next_test();
+        
+        // ---------------------------------------------------------------------
+        // Write exactly one value.
+        // ---------------------------------------------------------------------
+        
+        @(negedge wr_clk);
+        
+        wr_en   = 1'b1;
+        wr_data = 8'h55;
+        
+        @(negedge wr_clk);
+        
+        wr_en = 1'b0;
+        
+        // ---------------------------------------------------------------------
+        // Wait for the write pointer to cross into the read clock domain.
+        //
+        // The clocks are asynchronous, so we wait for EMPTY to deassert.
+        // The repeat provides a generous timeout without requiring any
+        // additional variable declarations.
+        // ---------------------------------------------------------------------
+        
+        fork
+        
+            begin : wait_for_data
+                wait (!empty);
+            end
+        
+            begin : cdc_timeout
+                repeat (20) @(posedge rd_clk);
+        
+                if (empty) begin
+                    $error(
+                        "[%0t ns] [FAIL] CDC timeout: FIFO remained EMPTY after 20 rd_clk cycles.",
+                        $time
+                    );
+                    error_count++;
+                end
+            end
+        
+        join_any
+        
+        disable wait_for_data;
+        disable cdc_timeout;
+        
+        // ---------------------------------------------------------------------
+        // If data became visible, drain the FIFO.
+        // ---------------------------------------------------------------------
+        
+        if (!empty) begin
+            drain_fifo();
         end
-        drain_fifo();
+        
+        // ---------------------------------------------------------------------
+        // Verify that the reference queue is empty.
+        // ---------------------------------------------------------------------
+        
+        verify_reference_empty("TEST 5");
 
-        // --------------------------------------------------------------------
-        // Test 6: Mid-Burst Asynchronous Reset Recovery Test
-        // --------------------------------------------------------------------
-        $display("\n--- [TEST 6] Testing Mid-Burst Asynchronous Reset ---");
-        // Fill half FIFO
+        // =====================================================================
+        // TEST 6: MID-BURST RESET
+        // =====================================================================
+
+        $display("\n--- [TEST 6] Mid-Burst Asynchronous Reset ---");
+
+        prepare_next_test();
+
         for (int i = 0; i < 8; i++) begin
-            @(posedge wr_clk);
-            wr_en   <= 1'b1;
-            wr_data <= i + 1;
-        end
-        @(posedge wr_clk);
-        wr_en <= 1'b0;
 
-        // Assert reset mid-operation
+            @(negedge wr_clk);
+
+            wr_en   = 1'b1;
+            wr_data = i + 1;
+
+        end
+
+        @(negedge wr_clk);
+        wr_en = 1'b0;
+
+        // Reset while FIFO is active.
         #15;
-        wr_rst_n = 1'b0; rd_rst_n = 1'b0;
-        clear_mailbox(); // Flush expected items from scoreboard
+
+        wr_rst_n = 1'b0;
+        rd_rst_n = 1'b0;
+
+        clear_mailbox();
+
         #30;
-        wr_rst_n = 1'b1; rd_rst_n = 1'b1;
-        repeat(3) @(posedge wr_clk);
+
+        wr_rst_n = 1'b1;
+        rd_rst_n = 1'b1;
+
+        repeat (3) @(posedge wr_clk);
+        repeat (3) @(posedge rd_clk);
 
         if (!empty || full) begin
-            $error("[%0t ns] [FAIL] Mid-burst reset failed to restore initial state!", $time);
+
+            $error(
+                "[%0t ns] [FAIL] Mid-burst reset failed! empty=%0b full=%0b",
+                $time,
+                empty,
+                full
+            );
+
             error_count++;
-        end else begin
-            $display("[%0t ns] [PASS] Mid-burst reset successfully cleared pointers & flags.", $time);
+
+        end
+        else begin
+
+            $display(
+                "[%0t ns] [PASS] Mid-burst reset successfully cleared FIFO state.",
+                $time
+            );
+
         end
 
-        // --------------------------------------------------------------------
-        // Test 7: Pointer Wraparound Test
-        // --------------------------------------------------------------------
-        $display("\n--- [TEST 7] Testing Pointer Wraparound ---");
+        verify_reference_empty("TEST 6");
+
+        // =====================================================================
+        // TEST 7: POINTER WRAPAROUND
+        // =====================================================================
+
+        $display("\n--- [TEST 7] Pointer Wraparound ---");
+
+        prepare_next_test();
+
         for (int k = 0; k < (DEPTH * 8); k++) begin
-            @(posedge wr_clk);
+
+            // ------------------------------------------------------------
+            // WRITE SIDE
+            // ------------------------------------------------------------
+
+            @(negedge wr_clk);
+
             if (!full) begin
-                wr_en   <= 1'b1;
-                wr_data <= k[7:0];
-            end else begin
-                wr_en   <= 1'b0;
+
+                wr_en   = 1'b1;
+                wr_data = k[DATA_WIDTH-1:0];
+
+            end
+            else begin
+
+                wr_en = 1'b0;
+
             end
 
-            @(posedge rd_clk);
-            if (!empty) rd_en <= 1'b1;
-            else        rd_en <= 1'b0;
+            // ------------------------------------------------------------
+            // READ SIDE
+            // ------------------------------------------------------------
+
+            @(negedge rd_clk);
+
+            if (!empty)
+                rd_en = 1'b1;
+            else
+                rd_en = 1'b0;
+
         end
 
-        @(posedge wr_clk); wr_en <= 1'b0;
+        @(negedge wr_clk);
+        wr_en = 1'b0;
+
+        @(negedge rd_clk);
+        rd_en = 1'b0;
+
         drain_fifo();
 
-        // --------------------------------------------------------------------
-        // Test 8: Dynamic Clock Ratio Change & Stress Traffic
-        // --------------------------------------------------------------------
+        verify_reference_empty("TEST 7");
+
+        // =====================================================================
+        // TEST 8: CLOCK RATIO STRESS
+        // =====================================================================
+
         $display("\n--- [TEST 8] Dynamic Clock Ratio Change & Stress Traffic ---");
+
+        prepare_next_test();
+
         wr_clk_period = 30.0;
         rd_clk_period = 8.0;
 
         fork
-            // Write Process
+
+            // ------------------------------------------------------------
+            // WRITE PROCESS
+            // ------------------------------------------------------------
+
             begin
+
                 repeat (150) begin
-                    @(posedge wr_clk);
+
+                    @(negedge wr_clk);
+
                     if (!full) begin
-                        wr_en   <= $urandom_range(0, 1);
-                        wr_data <= $urandom();
-                    end else begin
-                        wr_en   <= 1'b0;
+
+                        wr_en   = $urandom_range(0, 1);
+                        wr_data = $urandom();
+
                     end
+                    else begin
+
+                        wr_en = 1'b0;
+
+                    end
+
                 end
-                wr_en <= 1'b0;
+
+                @(negedge wr_clk);
+                wr_en = 1'b0;
+
             end
 
-            // Read Process
+            // ------------------------------------------------------------
+            // READ PROCESS
+            // ------------------------------------------------------------
+
             begin
+
                 repeat (300) begin
-                    @(posedge rd_clk);
-                    if (!empty) begin
-                        rd_en <= $urandom_range(0, 1);
-                    end else begin
-                        rd_en <= 1'b0;
-                    end
+
+                    @(negedge rd_clk);
+
+                    if (!empty)
+                        rd_en = $urandom_range(0, 1);
+                    else
+                        rd_en = 1'b0;
+
                 end
-                rd_en <= 1'b0;
+
+                @(negedge rd_clk);
+                rd_en = 1'b0;
+
             end
+
         join
 
         #100;
-        drain_fifo();
-        repeat(5) @(posedge rd_clk);
 
-        // --------------------------------------------------------------------
-        // Final Summary Report
-        // --------------------------------------------------------------------
-        if (ref_mbx.num() > 0) begin
-            $error("[FAIL: MISSING DATA] %0d unread items remain in reference queue!", ref_mbx.num());
-            error_count++;
-        end
+        drain_fifo();
+
+        repeat (5) @(posedge rd_clk);
+
+        verify_reference_empty("TEST 8");
+
+        // =====================================================================
+        // FINAL SUMMARY
+        // =====================================================================
 
         $display("\n========================================================");
-        $display("                 VERIFICATION SUMMARY                   ");
+        $display("                 VERIFICATION SUMMARY");
         $display("========================================================");
-        $display(" Total Write Attempts  : %0d", total_writes);
-        $display(" Accepted Writes        : %0d", accepted_writes);
-        $display(" Total Read Attempts    : %0d", total_reads);
-        $display(" Accepted Reads         : %0d", accepted_reads);
-        $display(" Total Error Count      : %0d", error_count);
+
+        $display(
+            " Total Write Attempts  : %0d",
+            total_writes
+        );
+
+        $display(
+            " Accepted Writes        : %0d",
+            accepted_writes
+        );
+
+        $display(
+            " Total Read Attempts    : %0d",
+            total_reads
+        );
+
+        $display(
+            " Accepted Reads         : %0d",
+            accepted_reads
+        );
+
+        $display(
+            " Reference Queue        : %0d item(s)",
+            ref_mbx.num()
+        );
+
+        $display(
+            " Total Error Count      : %0d",
+            error_count
+        );
+
         $display("--------------------------------------------------------");
 
-        if (error_count == 0 && accepted_writes == accepted_reads) begin
+        if ((error_count == 0) &&
+            (ref_mbx.num() == 0)) begin
+
             $display(" STATUS: [*** TEST PASSED ***]");
-        end else begin
-            $display(" STATUS: [*** TEST FAILED ***]");
+
         end
+        else begin
+
+            $display(" STATUS: [*** TEST FAILED ***]");
+
+        end
+
         $display("========================================================\n");
 
         $finish;
+
     end
 
 endmodule
