@@ -13,15 +13,20 @@
     "CLOCK_PORT": "wr_clk",
     "CLOCK_NET": "wr_clk",
     "CLOCK_PERIOD": 10.0,
+    
     "BASE_SDC_FILE": "dir::src/constraint.sdc",
+    "PNR_SDC_FILE": "dir::src/constraint.sdc",
+    "SIGNOFF_SDC_FILE": "dir::src/constraint.sdc",
+
     "PDK": "sky130A",
     "STD_CELL_LIBRARY": "sky130_fd_sc_hd",
     "FP_CORE_UTIL": 45,
     "PL_TARGET_DENSITY": 0.55,
-    "SYNTH_MAX_FANOUT": 8,
+    "SYNTH_MAX_FANOUT": 6,
     "SYNTH_STRATEGY": "DELAY 0",
     "SYNTH_BUFFERING": 1,
-    "SYNTH_READ_BLACKBOX_LIB": 1,
+
     "RUN_KLAYOUT_XOR": false,
-    "MAGIC_DEF_NO_DIODE_INSERTION": true
+    "MAGIC_DEF_NO_DIODE_INSERTION": true,
+    "GENERATE_FINAL_SUMMARY_REPORT": true
 }
