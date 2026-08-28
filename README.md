@@ -6,3 +6,40 @@ It is also protected by 2 ffs against metastability.
 
 //// REQUIREMENTS////
 vivado,openlane,librelane
+
+as of 22:23 28=08=2026
+
+DATA_WIDTH  = 8
+ADDR_WIDTH  = 4
+FIFO DEPTH  = 16
+
+Write clock : wr_clk
+Read clock  : rd_clk
+
+Clock domains:
+    Independent / asynchronous
+
+CDC:
+    Binary pointers converted to Gray code
+    Gray pointers synchronized using 2-stage synchronizers
+
+Write-side status:
+    FULL
+    ALMOST-FULL
+
+Read-side status:
+    EMPTY
+    ALMOST-EMPTY
+
+Read data:
+    Registered on rd_clk
+
+Protection:
+    Writes blocked when FULL
+    Reads blocked when EMPTY
+
+Verification:
+    RTL simulation: PASS
+    Post-synthesis functional simulation: PASS
+    Errors: 0
+
