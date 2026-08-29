@@ -1,45 +1,54 @@
-//// OVERVIEW ////
-This project implements a parameterizable, synthesizable Dual-Clock Asynchronous FIFO in SystemVerilog, designed for robust clock-domain crossing (CDC) between independent clock sources with arbitrary frequencies and phases.
-By maintaining simultaneous Binary and Gray-code pointer registers, the architecture eliminates deep back-conversion XOR trees, computing FULL and EMPTY flags directly in the Gray domain through bitwise comparisons and MSB inversion.
-This approach drastically minimizes gate count, reduces combinational path depth to O(Nlog2 N), and optimizes critical paths for maximum operational frequency fMAX.
-It is also protected by 2 ffs against metastability.
+# Silicon Syndicate — Veltraxx 2026
 
-//// REQUIREMENTS////
-vivado,openlane,librelane
+![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
+![Target PDK](https://img.shields.io/badge/PDK-SkyWater%20130nm-orange)
+![EDA Tool](https://img.shields.io/badge/Flow-OpenLane%20%2F%20Yosys-green)
 
-as of 22:23 28=08=2026
+Welcome to the official design submission by team **Silicon Syndicate** for **Veltraxx 2026**. 
 
-DATA_WIDTH  = 8
-ADDR_WIDTH  = 4
-FIFO DEPTH  = 16
+This repository contains the complete SystemVerilog/RTL design, testbench verification environment, synthesis scripts, and OpenLane physical design flow for our digital IC submission.
 
-Write clock : wr_clk
-Read clock  : rd_clk
+---
 
-Clock domains:
-    Independent / asynchronous
+## 📌 Table of Contents
 
-CDC:
-    Binary pointers converted to Gray code
-    Gray pointers synchronized using 2-stage synchronizers
+- [Overview](#-overview)
+- [Key Features](#-key-features)
+- [Repository Structure](#-repository-structure)
+- [Architecture & Design Details](#-architecture--design-details)
+- [Verification & Simulation](#-verification--simulation)
+- [ASIC Flow & Synthesis (Sky130)](#-asic-flow--synthesis-sky130)
+  - [Synthesis Metrics](#synthesis-metrics)
+- [Getting Started](#-getting-started)
+- [License & Acknowledgments](#-license--acknowledgments)
 
-Write-side status:
-    FULL
-    ALMOST-FULL
+---
 
-Read-side status:
-    EMPTY
-    ALMOST-EMPTY
+## 🔒 Overview
 
-Read data:
-    Registered on rd_clk
+Our project focuses on delivering a robust, efficient, and fully verifiable hardware design targeting the **SkyWater 130nm High-Density (`sky130_fd_sc_hd`)** standard cell library. The implementation prioritizes low-area footprint, correct cross-clock domain synchronization, and clean synthesis mapping using open-source EDA tools.
 
-Protection:
-    Writes blocked when FULL
-    Reads blocked when EMPTY
+---
 
-Verification:
-    RTL simulation: PASS
-    Post-synthesis functional simulation: PASS
-    Errors: 0
+## ✨ Key Features
 
+* **RTL Implementation:** Modular, parameterized SystemVerilog / Verilog code designed for readability and synthesis compatibility.
+* **CDC & Synchronization:** Robust handling of multi-clock or asynchronous interfaces using standard double-flop synchronizers and Gray code pointer conversion.
+* **OpenLane Integration:** Fully automated open-source ASIC flow setup targeting the Sky130 PDK.
+* **Complete Verification:** Rigorous testbench suite checking corner cases, boundary conditions, and flag assertions (Full/Empty/Overflow/Underflow).
+
+---
+
+## 📁 Repository Structure
+
+```text
+├── rtl/                   # SystemVerilog / Verilog RTL source files
+│   ├── top.v              # Top-level module
+│   └── ...                # Submodules
+├── tb/                    # Testbenches & verification suites
+│   └── tb_top.v           # Top-level testbench
+├── openlane/              # OpenLane build configurations & runs
+│   └── config.json        # OpenLane flow configuration settings
+├── docs/                  # Design diagrams, waveforms, and notes
+├── Makefile               # Simulation and synthesis automation
+└── README.md              # Project documentation
