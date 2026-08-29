@@ -87,8 +87,6 @@ veltraxx2026_silicon_syndicate/
 │   ├── sync_w2r_ptr.sv          # Write-to-read domain synchronizer
 │   └── wr_ptr_full.sv           # Write pointer generation & full flag logic
 ├── tb/
-    └──tb_async_fifo.sv/
-     
-├── tb/
-│   └── fifotb.sv                # Dynamic testbench & verification suite
+|   └──tb_async_fifo.sv/                # Dynamic testbench & verification suite
+|
 └── README.md                     # Project documentation
