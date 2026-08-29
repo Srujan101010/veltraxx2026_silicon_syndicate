@@ -78,6 +78,10 @@ veltraxx2026_silicon_syndicate/
 │   ├── async_fifo.klayout.gds    # GDSII layout output for fabrication
 │   ├── irdrop.rpt                # IR drop analysis report
 │   └── summary.rpt               # Combined metric summary report
+|
+├──presentation/
+|   └── async_fifoo_ppt.pdf
+|
 ├── src/                           # SystemVerilog RTL source files
 │   ├── async_fifo.sv             # Top-level wrapper module
 │   ├── fifomem.sv                # Dual-port memory array
