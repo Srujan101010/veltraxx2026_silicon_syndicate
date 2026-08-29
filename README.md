@@ -203,7 +203,7 @@ The final `async_fifo.klayout.gds` is a DRC-clean, LVS-matched layout ready for 
 ## 🚀 Getting Started
 
 ### Prerequisites
-- [OpenLane](https://github.com/The-OpenROAD-Project/OpenLane) and [OpenROAD](https://github.com/The-OpenROAD-Project/OpenROAD) (or the OpenLane Docker/Nix environment)
+- [LibreLane](https://github.com/librelane/librelane) (successor to OpenLane) and [OpenROAD](https://github.com/The-OpenROAD-Project/OpenROAD) (or the LibreLane Docker/Nix environment)
 - [Yosys](https://github.com/YosysHQ/yosys) for synthesis
 - [Verilator](https://www.veripool.org/verilator/) for RTL linting
 - A SystemVerilog simulator (e.g. Icarus Verilog, Verilator, or a commercial simulator) for running the testbench
@@ -225,12 +225,12 @@ verilator --lint-only -Isrc src/async_fifo.sv
 ```bash
 # Example using Icarus Verilog
 iverilog -g2012 -o sim_out tb/tb_async_fifo.sv src/*.sv
-vvp sim_out
+vvp sim_out (for opensource)
 ```
 
-### 4. Run the OpenLane physical design flow
+### 4. Run the LibreLane physical design flow
 ```bash
-./flow.tcl -design async_fifo -config_file constraints/config.json
+python -m librelane --dockerized /home/jayanth/librelane/designs/asyncfifo/config.json
 ```
 
 ### 5. Review signoff artifacts
